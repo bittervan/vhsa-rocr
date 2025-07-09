@@ -47,6 +47,7 @@
 
 #include "core/inc/amd_kfd_driver.h"
 #include "core/inc/amd_xdna_driver.h"
+#include "core/inc/amd_xdna_driver.h"
 
 #endif
 

@@ -41,6 +41,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "core/inc/amd_topology.h"
+#include "core/inc/amd_vhsa_driver.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -78,13 +79,13 @@ namespace {
 #if _WIN32
 constexpr size_t num_drivers = 0;
 #elif __linux__
-constexpr size_t num_drivers = 2;
+constexpr size_t num_drivers = 3;
 #endif
 
 const std::array<std::function<hsa_status_t(std::unique_ptr<core::Driver>&)>, num_drivers>
     discover_driver_funcs = {
 #ifdef __linux__
-        KfdDriver::DiscoverDriver, XdnaDriver::DiscoverDriver
+        KfdDriver::DiscoverDriver, XdnaDriver::DiscoverDriver, VhsaDriver::DiscoverDriver
 #endif
 };
 
