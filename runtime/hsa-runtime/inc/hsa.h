@@ -264,7 +264,11 @@ typedef enum {
   /**
   * The queue received an error that may require process termination.
   */
-  HSA_STATUS_ERROR_FATAL = 0x1026
+  HSA_STATUS_ERROR_FATAL = 0x1026,
+    /**
+     * The operation is not implemented.
+     */
+    HSA_STATUS_ERROR_NOT_IMPLEMENTED = 0x10ff,
 } hsa_status_t;
 
 /**
