@@ -53,24 +53,29 @@ VhsaDriver::~VhsaDriver() {
 }
 
 hsa_status_t VhsaDriver::Open() {
-    // TODO (vHSA): 在这里实现 mmap /dev/mem 来访问 QEMU 设备的 BAR 空间
-    // 这是用户态驱动的核心步骤。
-    // 1. 读取 resource0 文件获取物理地址和大小。
-    // 2. 打开 /dev/mem。
-    // 3. 调用 mmap 将物理地址映射到本进程的虚拟地址空间。
-    // 4. 将映射后的指针存到私有成员变量 qemu_device_mmap_ 中。
-    
     printf("vHSA: Open() called. Simulating mmap to QEMU device...\n");
-    is_open_ = true; // 假设成功
-    return HSA_STATUS_SUCCESS;
+    fd_ = open(devnode_name_.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd_ < 0) {
+        printf("vHSA: Open() failed\n");
+        return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
+    } else {
+        printf("vHSA: Open() successed\n");
+        return HSA_STATUS_SUCCESS;
+    }
 }
 
 hsa_status_t VhsaDriver::Close() {
-    // TODO (vHSA): 实现 munmap 和 close(/dev/mem)
-    printf("vHSA: Close() called. Simulating munmap...\n");
-    // if (qemu_device_mmap_) munmap(qemu_device_mmap_, ...);
-    // if (qemu_device_fd_ >= 0) close(qemu_device_fd_);
-    is_open_ = false;
+    printf("vHSA: Close() called\n");
+    int ret(0);
+    if (fd_ > 0) {
+        ret = close(fd_);
+        fd_ = -1;
+    }
+    if (ret) {
+        printf("vHSA: Close() failed\n");
+        return HSA_STATUS_ERROR;
+    }
+    printf("vHSA: Close() successed\n");
     return HSA_STATUS_SUCCESS;
 }
 
