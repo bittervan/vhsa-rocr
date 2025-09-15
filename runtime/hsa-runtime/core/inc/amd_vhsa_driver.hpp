@@ -68,20 +68,65 @@ public:
     hsa_status_t IsModelEnabled(bool* enable) const override;
 
 private:
-    // 新增：在这里定义与 QEMU 后端通信所需的私有成员变量
     std::string pci_path_;           // 保存设备的 sysfs 路径
     bool is_open_ = false;           // 跟踪 Open/Close 状态
     int dev_mem_fd_ = -1;            // 用于 mmap /dev/mem 的文件描述符
     void* mmio_base_ = nullptr;      // 映射后的 MMIO 基地址指针
     size_t mmio_size_ = 0;           // MMIO 区域的大小
+
+    /// @brief Allocate agent accessible memory (system / local memory).
+    void *AllocateKfdMemory(const HsaMemFlags &flags, uint32_t node_id,
+                                    size_t size);
+
+    /// @brief Free agent accessible memory (system / local memory).
+    bool FreeKfdMemory(void *mem, size_t size);
+
+    /// @brief Pin memory.
+    bool MakeKfdMemoryResident(size_t num_node, const uint32_t *nodes,
+                                        const void *mem, size_t size,
+                                        uint64_t *alternate_va,
+                                        HsaMemMapFlags map_flag);
+
+    /// @brief Unpin memory.
+    void MakeKfdMemoryUnresident(const void *mem);
+
+    /// @brief Query for user preference and use that to determine Xnack mode
+    /// of ROCm system. Return true if Xnack mode is ON or false if OFF. Xnack
+    /// mode of a system is orthogonal to devices that do not support Xnack mode.
+    /// It is legal for a system with Xnack ON to have devices that do not support
+    /// Xnack functionality.
+    bool BindXnackMode();
+
+    // Minimum acceptable KFD version numbers.
+    const uint32_t kfd_version_major_min = 0;
+    const uint32_t kfd_version_minor_min = 99;
 };
+
+enum vhsa_req_type {
+    VHSA_REQ_OPEN_KFD,
+    VHSA_REQ_RUNTIME_ENABLE,
+    VHSA_REQ_GET_RUNTIME_CAPABILITIES,
+    VHSA_REQ_GET_VERSION,
+    VHSA_REQ_SET_XNACK_MODE,
+    VHSA_REQ_GET_XNACK_MODE,
+    VHSA_REQ_MODEL_ENABLED,
+    VHSA_REQ_ACQUIRE_SYSTEM_PROPERTIES,
+    VHSA_REQ_RELEASE_SYSTEM_PROPERTIES,
+};
+
+struct vhsa_ioctl_vec {
+    uint32_t num_data_bufs;
+    uint32_t *data_buf_lens_user;
+    void **data_bufs_user;
+};
+
+struct vhsa_ioctl_vec* alloc_vhsa_ioctl_vec(uint32_t len);
+void free_vhsa_ioctl_vec(struct vhsa_ioctl_vec *ptr);
+
+
 
 } // namespace vHSA
 } // namespace rocr
 
-
-// === 这是我们之前讨论的、需要在 ROCR 运行时中注册的“发现函数” ===
-// 修正：将 DiscoverDriver 函数移到类外部，使其成为一个独立的自由函数，
-// 这与 KfdDriver 和 XdnaDriver 的模式完全一致。
 
 #endif // HSA_RUNTIME_CORE_INC_AMD_VHSA_DRIVER_HPP_

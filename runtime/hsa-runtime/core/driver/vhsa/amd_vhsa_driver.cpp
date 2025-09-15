@@ -1,14 +1,11 @@
 #include "core/inc/amd_vhsa_driver.hpp"
 
-// --- 核心依赖 ---
 #include "core/inc/driver.h"
-#include "core/inc/runtime.h"
-#include "core/inc/amd_gpu_agent.h" // 我们需要用它来创建虚拟 Agent
-#include "core/util/os.h"       // 使用 ROCR 的打印工具
 #include "core/inc/memory_region.h"
 #include "hsa.h"
+#include "hsakmt/hsakmttypes.h"
 
-// --- 用于用户态驱动的系统头文件 ---
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -18,12 +15,26 @@
 #include <cstring>
 #include <string>
 
-// 使用我们之前约定的命名空间
+#include "core/inc/amd_kfd_driver.h"
+
+#include <memory>
+#include <string>
+
+#include <amdgpu_drm.h>
+#include <link.h>
+#include <sys/ioctl.h>
+
+#include "hsakmt/hsakmt.h"
+
+#include "core/inc/amd_gpu_agent.h"
+#include "core/inc/amd_memory_region.h"
+#include "core/inc/runtime.h"
+
+extern r_debug _amdgpu_r_debug;
+
 namespace rocr {
 namespace AMD {
 
-// === 这是我们之前讨论的、需要在 ROCR 运行时中注册的“发现函数” ===
-// 这是我们整个 vHSA 模块的入口点
 hsa_status_t AMD::VhsaDriver::DiscoverDriver(std::unique_ptr<core::Driver>& driver) {
     auto tmp_driver = std::unique_ptr<core::Driver>(new VhsaDriver("/dev/vhsa"));
 
@@ -35,33 +46,28 @@ hsa_status_t AMD::VhsaDriver::DiscoverDriver(std::unique_ptr<core::Driver>& driv
     return HSA_STATUS_ERROR;
 }
 
-
-// --- VhsaDriver 类的成员函数实现 ---
-
 VhsaDriver::VhsaDriver(std::string devnode_name)
-    // 调用父类构造函数，将我们的驱动类型标识为 KFD，因为我们要模拟的就是一个 KFD 设备
     : core::Driver(core::DriverType::KFD, devnode_name) 
 {
     printf("vHSA: VhsaDriver constructor called for device path: %s\n", devnode_name.c_str());
 }
 
 VhsaDriver::~VhsaDriver() {
-    // 析构函数：确保资源被正确释放
     if (is_open_) {
         Close();
     }
 }
 
+
+HSAKMT_STATUS vhsaKmtOpenKFD(int fd) {
+    return (HSAKMT_STATUS)ioctl(fd, VHSA_REQ_OPEN_KFD, nullptr);
+}
+
 hsa_status_t VhsaDriver::Open() {
-    printf("vHSA: Open() called. Simulating mmap to QEMU device...\n");
     fd_ = open(devnode_name_.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd_ < 0) {
-        printf("vHSA: Open() failed\n");
-        return HSA_STATUS_ERROR_OUT_OF_RESOURCES;
-    } else {
-        printf("vHSA: Open() successed\n");
-        return HSA_STATUS_SUCCESS;
-    }
+  return vhsaKmtOpenKFD(fd_) == HSAKMT_STATUS_SUCCESS ? HSA_STATUS_SUCCESS
+                                                  : HSA_STATUS_ERROR;
+
 }
 
 hsa_status_t VhsaDriver::Close() {
@@ -79,27 +85,64 @@ hsa_status_t VhsaDriver::Close() {
     return HSA_STATUS_SUCCESS;
 }
 
+HSAKMT_STATUS vhsaKmtRuntimeEnable(int fd, bool setupTtmp)
+{
+    // Its impossilble for the host and guest to share a same r_debug structure
+    // So we just ignore the rDebug parameter here
+    struct vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
+    ioctl_vec->data_bufs_user[0] = &setupTtmp;
+    ioctl_vec->data_buf_lens_user[0] = sizeof(bool);
+    int ret = ioctl(fd, VHSA_REQ_RUNTIME_ENABLE, ioctl_vec);
+    free_vhsa_ioctl_vec(ioctl_vec);
+    return (HSAKMT_STATUS)ret;
+}
+
+HSAKMT_STATUS vhsaKmtGetRuntimeCapabilities(int fd, uint32_t* caps_mask)
+{
+    struct vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
+    ioctl_vec->data_bufs_user[0] = caps_mask;
+    ioctl_vec->data_buf_lens_user[0] = sizeof(uint32_t);
+    int ret = ioctl(fd, VHSA_REQ_GET_RUNTIME_CAPABILITIES, ioctl_vec);
+    free_vhsa_ioctl_vec(ioctl_vec);
+    return (HSAKMT_STATUS)ret;
+}
+
+HSAKMT_STATUS vhsaKmtGetVersion(int fd, HsaVersionInfo* version)
+{
+    struct vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
+    ioctl_vec->data_bufs_user[0] = version;
+    ioctl_vec->data_buf_lens_user[0] = sizeof(HsaVersionInfo);
+    int ret = ioctl(fd, VHSA_REQ_GET_VERSION, ioctl_vec);
+    free_vhsa_ioctl_vec(ioctl_vec);
+    return (HSAKMT_STATUS)ret;
+}
 
 hsa_status_t VhsaDriver::Init() {
-    // 这是核心初始化逻辑。ROCR 会调用这个函数。
-    // 我们的目标是：在这里发现所有由宿主机转发过来的“虚拟Agent”。
+    HSAKMT_STATUS ret =
+        vhsaKmtRuntimeEnable(fd_, core::Runtime::runtime_singleton_->flag().debug());
 
-    printf("vHSA: Driver Init() called.\n");
-    
-    // TODO (vHSA): 实现与 QEMU 后端的通信
-    // 1. 通过 MMIO 向 QEMU vHSA 设备发送一个 "VHSA_CMD_GET_AGENTS" 命令。
-    // 2. QEMU 后端在宿主机上调用真实的 hsa_iterate_agents，获取物理 GPU 的属性。
-    // 3. QEMU 后端将属性数据打包，通过共享内存或 MMIO 返回。
-    // 4. 在这里接收属性数据。
-    // 5. 根据接收到的数据，`new` 一个或多个 `AMD::GpuAgent` 对象。
-    // 6. 调用 `core::Runtime::runtime_singleton_->RegisterAgent(new_agent)` 将其注册到运行时。
-    
-    printf("vHSA: Simulating agent discovery...\n");
-    // 示例：手动创建一个假的 Agent 用于测试
-    // HsaNodeProperties node_props = {0};
-    // node_props.NumFComputeCores = 20; // 假的属性
-    // AMD::GpuAgent* virtual_agent = new AMD::GpuAgent(0, node_props);
-    // core::Runtime::runtime_singleton_->RegisterAgent(virtual_agent);
+    if (ret != HSAKMT_STATUS_SUCCESS && ret != HSAKMT_STATUS_NOT_SUPPORTED) return HSA_STATUS_ERROR;
+
+    uint32_t caps_mask = 0;
+    if (vhsaKmtGetRuntimeCapabilities(fd_, &caps_mask) != HSAKMT_STATUS_SUCCESS) return HSA_STATUS_ERROR;
+
+    core::Runtime::runtime_singleton_->KfdVersion(
+        ret != HSAKMT_STATUS_NOT_SUPPORTED,
+        !!(caps_mask & HSA_RUNTIME_ENABLE_CAPS_SUPPORTS_CORE_DUMP_MASK));
+
+    if (vhsaKmtGetVersion(fd_, &version_) != HSAKMT_STATUS_SUCCESS) return HSA_STATUS_ERROR;
+
+    if (version_.KernelInterfaceMajorVersion == kfd_version_major_min &&
+        version_.KernelInterfaceMinorVersion < kfd_version_major_min)
+        return HSA_STATUS_ERROR;
+
+    core::Runtime::runtime_singleton_->KfdVersion(version_);
+
+    if (version_.KernelInterfaceMajorVersion == 1 && version_.KernelInterfaceMinorVersion == 0)
+        core::g_use_interrupt_wait = false;
+
+    bool xnack_mode = BindXnackMode();
+    core::Runtime::runtime_singleton_->XnackEnabled(xnack_mode);
 
     return HSA_STATUS_SUCCESS;
 }
@@ -109,11 +152,8 @@ hsa_status_t VhsaDriver::ShutDown() {
     return HSA_STATUS_SUCCESS;
 }
 
-// --- 以下是其他需要覆盖的虚函数，在原型阶段，我们先提供存根实现 ---
-
 hsa_status_t VhsaDriver::QueryKernelModeDriver(core::DriverQuery query) {
     printf("vHSA: QueryKernelModeDriver() NOT IMPLEMENTED.\n");
-    // 我们可以伪造一个版本号
     if (query == core::DriverQuery::GET_DRIVER_VERSION) {
         version_.KernelInterfaceMajorVersion = 1;
         version_.KernelInterfaceMinorVersion = 2;
@@ -122,16 +162,37 @@ hsa_status_t VhsaDriver::QueryKernelModeDriver(core::DriverQuery query) {
     return HSA_STATUS_ERROR_NOT_IMPLEMENTED;
 }
 
+HSAKMT_STATUS vhsaKmtReleaseSystemProperties(int fd)
+{
+    ioctl(fd, VHSA_REQ_RELEASE_SYSTEM_PROPERTIES, nullptr);
+
+    return HSAKMT_STATUS_SUCCESS;
+}
+
+HSAKMT_STATUS vhsaKmtAcquireSystemProperties(int fd, HsaSystemProperties *SystemProperties)
+{
+    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
+    ioctl_vec->data_bufs_user[0] = SystemProperties;
+    ioctl_vec->data_buf_lens_user[0] = sizeof(HsaSystemProperties);
+    int ret = ioctl(fd, VHSA_REQ_ACQUIRE_SYSTEM_PROPERTIES, ioctl_vec);
+    free_vhsa_ioctl_vec(ioctl_vec);
+    return (HSAKMT_STATUS)ret;
+}
+
+
 hsa_status_t VhsaDriver::GetSystemProperties(HsaSystemProperties& sys_props) const {
-    printf("vHSA: GetSystemProperties() NOT IMPLEMENTED.\n");
-    // TODO (vHSA): 从宿主机获取并转发真实信息
-    sys_props.NumNodes = 1; // 至少伪造一个节点
+    printf("vHSA: GetSystemProperties() called.\n");
+
+    if (vhsaKmtReleaseSystemProperties(fd_) != HSAKMT_STATUS_SUCCESS) return HSA_STATUS_ERROR;
+   
+    if (vhsaKmtAcquireSystemProperties(fd_, &sys_props) != HSAKMT_STATUS_SUCCESS) return HSA_STATUS_ERROR;
+
     return HSA_STATUS_SUCCESS;
 }
 
 hsa_status_t VhsaDriver::GetNodeProperties(HsaNodeProperties& node_props, uint32_t node_id) const {
-    printf("vHSA: GetNodeProperties() NOT IMPLEMENTED.\n");
-    // TODO (vHSA): 从宿主机获取并转发真实信息
+    printf("vHSA: GetNodeProperties() called.\n");
+
     return HSA_STATUS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -140,20 +201,16 @@ hsa_status_t VhsaDriver::AllocateMemory(const core::MemoryRegion &mem_region,
                               void **mem, size_t size,
                               uint32_t node_id) {
     printf("vHSA: AllocateMemory() NOT IMPLEMENTED.\n");
-    // TODO (vHSA): 核心转发逻辑。将分配请求（大小，flags，节点）发送给QEMU后端，
-    // 后端在宿主机上调用真实的 hsaKmtAllocMemory，然后将返回的指针（或其映射）传回来。
     return HSA_STATUS_ERROR_NOT_IMPLEMENTED;
 }
 
 hsa_status_t VhsaDriver::FreeMemory(void *mem, size_t size) {
     printf("vHSA: FreeMemory() NOT IMPLEMENTED.\n");
-    // TODO (vHSA): 将释放请求转发给QEMU后端。
     return HSA_STATUS_ERROR_NOT_IMPLEMENTED;
 }
 
 hsa_status_t VhsaDriver::CreateQueue(core::Queue &queue) const {
     printf("vHSA: CreateQueue() NOT IMPLEMENTED.\n");
-    // TODO (vHSA): 将队列创建请求转发给QEMU后端，获取真实的队列ID和门铃地址。
     return HSA_STATUS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -161,9 +218,6 @@ hsa_status_t VhsaDriver::DestroyQueue(core::Queue &queue) const {
     printf("vHSA: DestroyQueue() NOT IMPLEMENTED.\n");
     return HSA_STATUS_ERROR_NOT_IMPLEMENTED;
 }
-
-
-// --- 其他所有函数的简单存根实现 ---
 
 hsa_status_t VhsaDriver::GetEdgeProperties(std::vector<HsaIoLinkProperties>&, uint32_t) const { return HSA_STATUS_ERROR_NOT_IMPLEMENTED; }
 hsa_status_t VhsaDriver::GetAgentProperties(core::Agent&) const { return HSA_STATUS_ERROR_NOT_IMPLEMENTED; }
@@ -177,8 +231,89 @@ hsa_status_t VhsaDriver::ReleaseShareableHandle(core::ShareableHandle&) { return
 hsa_status_t VhsaDriver::SPMAcquire(uint32_t) const { return HSA_STATUS_ERROR_NOT_IMPLEMENTED; }
 hsa_status_t VhsaDriver::SPMRelease(uint32_t) const { return HSA_STATUS_ERROR_NOT_IMPLEMENTED; }
 hsa_status_t VhsaDriver::SPMSetDestBuffer(uint32_t, uint32_t, uint32_t*, uint32_t*, void*, bool*) const { return HSA_STATUS_ERROR_NOT_IMPLEMENTED; }
-hsa_status_t VhsaDriver::IsModelEnabled(bool* enable) const { *enable=false; return HSA_STATUS_SUCCESS; }
+// hsa_status_t VhsaDriver::IsModelEnabled(bool* enable) const { *enable=false; return HSA_STATUS_SUCCESS; }
 
+HSAKMT_STATUS vhsaKmtSetXNACKMode(int fd, HSAint32 enable)
+{
+    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
+    ioctl_vec->data_bufs_user[0] = &enable;
+    ioctl_vec->data_buf_lens_user[0] = sizeof(HSAint32);
+    int ret = ioctl(fd, VHSA_REQ_SET_XNACK_MODE, ioctl_vec);
+    free_vhsa_ioctl_vec(ioctl_vec);
+    return (HSAKMT_STATUS)ret;
+}
 
+HSAKMT_STATUS vhsaKmtGetXNACKMode(int fd, HSAint32 * enable)
+{
+    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
+    ioctl_vec->data_bufs_user[0] = enable;
+    ioctl_vec->data_buf_lens_user[0] = sizeof(HSAint32);
+    int ret = ioctl(fd, VHSA_REQ_GET_XNACK_MODE, ioctl_vec);
+    free_vhsa_ioctl_vec(ioctl_vec);
+    return (HSAKMT_STATUS)ret;
+}
+
+HSAKMT_STATUS vhsaKmtModelEnabled(int fd, bool* enable)
+{
+    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
+    ioctl_vec->data_bufs_user[0] = enable;
+    ioctl_vec->data_buf_lens_user[0] = sizeof(bool);
+    int ret = ioctl(fd, VHSA_REQ_MODEL_ENABLED, ioctl_vec);
+    free_vhsa_ioctl_vec(ioctl_vec);
+    return (HSAKMT_STATUS)ret;
+    //return (HSAKMT_STATUS)
+}
+
+bool VhsaDriver::BindXnackMode() {
+  // Get users' preference for Xnack mode of ROCm platform.
+  HSAint32 mode = core::Runtime::runtime_singleton_->flag().xnack();
+  bool config_xnack = (mode != Flag::XNACK_REQUEST::XNACK_UNCHANGED);
+
+  // Indicate to driver users' preference for Xnack mode
+  // Call to driver can fail and is a supported feature
+  HSAKMT_STATUS status = HSAKMT_STATUS_ERROR;
+  if (config_xnack) {
+    status = vhsaKmtSetXNACKMode(fd_, mode);
+    if (status == HSAKMT_STATUS_SUCCESS) {
+      return (mode != Flag::XNACK_DISABLE);
+    }
+  }
+
+  // Get Xnack mode of devices bound by driver. This could happen
+  // when a call to SET Xnack mode fails or user has no particular
+  // preference
+  status = vhsaKmtGetXNACKMode(fd_, &mode);
+  if (status != HSAKMT_STATUS_SUCCESS) {
+    debug_print(
+        "KFD does not support xnack mode query.\nROCr must assume "
+        "xnack is disabled.\n");
+    return false;
+  }
+  return (mode != Flag::XNACK_DISABLE);
+}
+
+hsa_status_t VhsaDriver::IsModelEnabled(bool* enable) const {
+  // AIE does not support streaming performance monitor.
+  HSAKMT_STATUS status = HSAKMT_STATUS_ERROR;
+  status = vhsaKmtModelEnabled(fd_, enable);
+  if (status != HSAKMT_STATUS_SUCCESS)
+     return HSA_STATUS_ERROR;
+
+  return HSA_STATUS_SUCCESS;
+}
+
+struct vhsa_ioctl_vec* alloc_vhsa_ioctl_vec(uint32_t num_data_bufs) {
+    struct vhsa_ioctl_vec *ret = (struct vhsa_ioctl_vec*)malloc(sizeof(struct vhsa_ioctl_vec));
+    ret->num_data_bufs = num_data_bufs;
+    ret->data_bufs_user = (void**)malloc(num_data_bufs * sizeof(void*));
+    ret->data_buf_lens_user = (uint32_t*)malloc(num_data_bufs * sizeof(uint32_t));
+    return ret;
+}
+
+void free_vhsa_ioctl_vec(struct vhsa_ioctl_vec *ptr) {
+    free(ptr->data_bufs_user);
+    free(ptr->data_buf_lens_user);
+    free(ptr);
+}
 } // namespace AMD
 } // namespace rocr
