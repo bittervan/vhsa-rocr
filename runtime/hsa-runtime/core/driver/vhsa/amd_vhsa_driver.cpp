@@ -47,7 +47,7 @@ hsa_status_t AMD::VhsaDriver::DiscoverDriver(std::unique_ptr<core::Driver>& driv
 }
 
 VhsaDriver::VhsaDriver(std::string devnode_name)
-    : core::Driver(core::DriverType::KFD, devnode_name) 
+    : core::Driver(core::DriverType::VHSA, devnode_name) 
 {
     printf("vHSA: VhsaDriver constructor called for device path: %s\n", devnode_name.c_str());
 }

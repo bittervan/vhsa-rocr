@@ -90,11 +90,17 @@ const std::array<std::function<hsa_status_t(std::unique_ptr<core::Driver>&)>, nu
 };
 
 void DiscoverDrivers() {
+  int i = 0;
   for (const auto& discover_driver_fn : discover_driver_funcs) {
+    printf("vHSA: Discovering driver %d\n", i++);
     std::unique_ptr<core::Driver> driver;
     hsa_status_t ret = discover_driver_fn(driver);
 
+    printf("Trying to initialize driver\n");
+
     if (ret != HSA_STATUS_SUCCESS) continue;
+
+    printf("Driver discovered\n");
 
     core::Runtime::runtime_singleton_->RegisterDriver(std::move(driver));
   }
@@ -255,10 +261,15 @@ void RegisterLinkInfo(const std::unique_ptr<core::Driver>& driver, uint32_t node
  */
 void SurfaceGpuList(std::vector<int32_t>& gpu_list, bool xnack_mode, bool enabled) {
   // Process user visible Gpu devices
+  printf("vHSA: SurfaceGpuList() called with %zu devices, xnack_mode=%d, enabled=%d\n",
+         gpu_list.size(), (int)xnack_mode, (int)enabled);
   const int32_t invalidIdx = -1;
+  printf("vHSA: Before getting the gpu driver\n");
   int32_t list_sz = gpu_list.size();
   HsaNodeProperties node_prop = {0};
+  printf("vHSA: Before constructing the driver\n");
   const auto& gpu_driver = core::Runtime::runtime_singleton_->AgentDriver(core::DriverType::KFD);
+  printf("vHSA: Gpu driver type is %d\n", (int)gpu_driver.kernel_driver_type_);
   for (int32_t idx = 0; idx < list_sz; idx++) {
     if (gpu_list[idx] == invalidIdx) {
       break;
@@ -273,6 +284,7 @@ void SurfaceGpuList(std::vector<int32_t>& gpu_list, bool xnack_mode, bool enable
     assert((node_prop.NumFComputeCores != 0) && "Improper node used for GPU device discovery.");
     DiscoverGpu(gpu_list[idx], node_prop, xnack_mode, enabled);
   }
+  printf("vHSA: SurfaceGpuList() exiting...\n");
 }
 
 /// @brief Calls into the user-mode driver for each node to build the topology
@@ -369,7 +381,10 @@ bool BuildTopology() {
   }
 
   // Instantiate ROCr objects to encapsulate Gpu devices
+  printf("vHSA: Instantiating GPU devices...\n");
   SurfaceGpuList(gpu_usr_list, rt->XnackEnabled(), true);
+  printf("vHSA: Instantiating Disabled GPU devices...\n");
+  printf("The second is called!!!\n");
   SurfaceGpuList(gpu_disabled, rt->XnackEnabled(), false);
 
   // Parse HSA_CU_MASK with GPU and CU count limits.
