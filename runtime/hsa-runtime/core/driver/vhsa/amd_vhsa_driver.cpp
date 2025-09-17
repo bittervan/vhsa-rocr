@@ -60,7 +60,9 @@ VhsaDriver::~VhsaDriver() {
 
 
 HSAKMT_STATUS vhsaKmtOpenKFD(int fd) {
-    return (HSAKMT_STATUS)ioctl(fd, VHSA_REQ_OPEN_KFD, nullptr);
+    HSAKMT_STATUS ret = (HSAKMT_STATUS)ioctl(fd, VHSA_REQ_OPEN_KFD, nullptr);
+    printf("vHSA: vhsaKmtOpenKFD() returned %d\n", ret);
+    return ret;
 }
 
 hsa_status_t VhsaDriver::Open() {
@@ -89,9 +91,9 @@ HSAKMT_STATUS vhsaKmtRuntimeEnable(int fd, bool setupTtmp)
 {
     // Its impossilble for the host and guest to share a same r_debug structure
     // So we just ignore the rDebug parameter here
-    struct vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
-    ioctl_vec->data_bufs_user[0] = &setupTtmp;
-    ioctl_vec->data_buf_lens_user[0] = sizeof(bool);
+    struct vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(0, 1);
+    ioctl_vec->out_lens[0] = sizeof(bool);
+    ioctl_vec->outs[0] = &setupTtmp;
     int ret = ioctl(fd, VHSA_REQ_RUNTIME_ENABLE, ioctl_vec);
     free_vhsa_ioctl_vec(ioctl_vec);
     return (HSAKMT_STATUS)ret;
@@ -99,9 +101,9 @@ HSAKMT_STATUS vhsaKmtRuntimeEnable(int fd, bool setupTtmp)
 
 HSAKMT_STATUS vhsaKmtGetRuntimeCapabilities(int fd, uint32_t* caps_mask)
 {
-    struct vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
-    ioctl_vec->data_bufs_user[0] = caps_mask;
-    ioctl_vec->data_buf_lens_user[0] = sizeof(uint32_t);
+    struct vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1, 0);
+    ioctl_vec->in_lens[0] = sizeof(uint32_t);
+    ioctl_vec->ins[0] = caps_mask;
     int ret = ioctl(fd, VHSA_REQ_GET_RUNTIME_CAPABILITIES, ioctl_vec);
     free_vhsa_ioctl_vec(ioctl_vec);
     return (HSAKMT_STATUS)ret;
@@ -109,9 +111,9 @@ HSAKMT_STATUS vhsaKmtGetRuntimeCapabilities(int fd, uint32_t* caps_mask)
 
 HSAKMT_STATUS vhsaKmtGetVersion(int fd, HsaVersionInfo* version)
 {
-    struct vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
-    ioctl_vec->data_bufs_user[0] = version;
-    ioctl_vec->data_buf_lens_user[0] = sizeof(HsaVersionInfo);
+    struct vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1, 0);
+    ioctl_vec->in_lens[0] = sizeof(HsaVersionInfo);
+    ioctl_vec->ins[0] = version;
     int ret = ioctl(fd, VHSA_REQ_GET_VERSION, ioctl_vec);
     free_vhsa_ioctl_vec(ioctl_vec);
     return (HSAKMT_STATUS)ret;
@@ -171,9 +173,9 @@ HSAKMT_STATUS vhsaKmtReleaseSystemProperties(int fd)
 
 HSAKMT_STATUS vhsaKmtAcquireSystemProperties(int fd, HsaSystemProperties *SystemProperties)
 {
-    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
-    ioctl_vec->data_bufs_user[0] = SystemProperties;
-    ioctl_vec->data_buf_lens_user[0] = sizeof(HsaSystemProperties);
+    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1, 0);
+    ioctl_vec->in_lens[0] = sizeof(HsaSystemProperties);
+    ioctl_vec->ins[0] = SystemProperties;
     int ret = ioctl(fd, VHSA_REQ_ACQUIRE_SYSTEM_PROPERTIES, ioctl_vec);
     free_vhsa_ioctl_vec(ioctl_vec);
     return (HSAKMT_STATUS)ret;
@@ -235,9 +237,9 @@ hsa_status_t VhsaDriver::SPMSetDestBuffer(uint32_t, uint32_t, uint32_t*, uint32_
 
 HSAKMT_STATUS vhsaKmtSetXNACKMode(int fd, HSAint32 enable)
 {
-    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
-    ioctl_vec->data_bufs_user[0] = &enable;
-    ioctl_vec->data_buf_lens_user[0] = sizeof(HSAint32);
+    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(0, 1);
+    ioctl_vec->out_lens[0] = sizeof(HSAint32);
+    ioctl_vec->outs[0] = &enable;
     int ret = ioctl(fd, VHSA_REQ_SET_XNACK_MODE, ioctl_vec);
     free_vhsa_ioctl_vec(ioctl_vec);
     return (HSAKMT_STATUS)ret;
@@ -245,9 +247,9 @@ HSAKMT_STATUS vhsaKmtSetXNACKMode(int fd, HSAint32 enable)
 
 HSAKMT_STATUS vhsaKmtGetXNACKMode(int fd, HSAint32 * enable)
 {
-    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
-    ioctl_vec->data_bufs_user[0] = enable;
-    ioctl_vec->data_buf_lens_user[0] = sizeof(HSAint32);
+    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1, 0);
+    ioctl_vec->in_lens[0] = sizeof(HSAint32);
+    ioctl_vec->ins[0] = enable;
     int ret = ioctl(fd, VHSA_REQ_GET_XNACK_MODE, ioctl_vec);
     free_vhsa_ioctl_vec(ioctl_vec);
     return (HSAKMT_STATUS)ret;
@@ -255,9 +257,9 @@ HSAKMT_STATUS vhsaKmtGetXNACKMode(int fd, HSAint32 * enable)
 
 HSAKMT_STATUS vhsaKmtModelEnabled(int fd, bool* enable)
 {
-    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1);
-    ioctl_vec->data_bufs_user[0] = enable;
-    ioctl_vec->data_buf_lens_user[0] = sizeof(bool);
+    vhsa_ioctl_vec* ioctl_vec = alloc_vhsa_ioctl_vec(1, 0);
+    ioctl_vec->in_lens[0] = sizeof(bool);
+    ioctl_vec->ins[0] = enable;
     int ret = ioctl(fd, VHSA_REQ_MODEL_ENABLED, ioctl_vec);
     free_vhsa_ioctl_vec(ioctl_vec);
     return (HSAKMT_STATUS)ret;
@@ -302,17 +304,22 @@ hsa_status_t VhsaDriver::IsModelEnabled(bool* enable) const {
   return HSA_STATUS_SUCCESS;
 }
 
-struct vhsa_ioctl_vec* alloc_vhsa_ioctl_vec(uint32_t num_data_bufs) {
+struct vhsa_ioctl_vec* alloc_vhsa_ioctl_vec(uint32_t num_ins, uint32_t num_outs) {
     struct vhsa_ioctl_vec *ret = (struct vhsa_ioctl_vec*)malloc(sizeof(struct vhsa_ioctl_vec));
-    ret->num_data_bufs = num_data_bufs;
-    ret->data_bufs_user = (void**)malloc(num_data_bufs * sizeof(void*));
-    ret->data_buf_lens_user = (uint32_t*)malloc(num_data_bufs * sizeof(uint32_t));
+    ret->num_ins = num_ins;
+    ret->ins = (void**)malloc(num_ins * sizeof(void*));
+    ret->in_lens = (uint32_t*)malloc(num_ins * sizeof(uint32_t));
+    ret->num_outs = num_outs;
+    ret->outs = (void**)malloc(num_outs * sizeof(void*));
+    ret->out_lens = (uint32_t*)malloc(num_outs * sizeof(uint32_t));
     return ret;
 }
 
 void free_vhsa_ioctl_vec(struct vhsa_ioctl_vec *ptr) {
-    free(ptr->data_bufs_user);
-    free(ptr->data_buf_lens_user);
+    free(ptr->ins);
+    free(ptr->in_lens);
+    free(ptr->outs);
+    free(ptr->out_lens);
     free(ptr);
 }
 } // namespace AMD

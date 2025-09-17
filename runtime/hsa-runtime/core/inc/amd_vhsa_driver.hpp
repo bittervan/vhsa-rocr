@@ -1,6 +1,7 @@
 #ifndef HSA_RUNTIME_CORE_INC_AMD_VHSA_DRIVER_HPP_
 #define HSA_RUNTIME_CORE_INC_AMD_VHSA_DRIVER_HPP_
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -114,13 +115,23 @@ enum vhsa_req_type {
     VHSA_REQ_RELEASE_SYSTEM_PROPERTIES,
 };
 
+// struct vhsa_ioctl_vec {
+//     uint32_t num_data_bufs;
+//     uint32_t *data_buf_lens_user;
+//     void **data_bufs_user;
+// };
+
 struct vhsa_ioctl_vec {
-    uint32_t num_data_bufs;
-    uint32_t *data_buf_lens_user;
-    void **data_bufs_user;
+    int num_ins;
+    void **ins;
+    uint32_t *in_lens;
+    int num_outs;
+    void **outs;
+    uint32_t *out_lens;
 };
 
-struct vhsa_ioctl_vec* alloc_vhsa_ioctl_vec(uint32_t len);
+
+struct vhsa_ioctl_vec* alloc_vhsa_ioctl_vec(uint32_t num_ins, uint32_t num_outs);
 void free_vhsa_ioctl_vec(struct vhsa_ioctl_vec *ptr);
 
 

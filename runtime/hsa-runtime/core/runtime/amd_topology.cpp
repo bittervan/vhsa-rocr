@@ -339,6 +339,7 @@ bool BuildTopology() {
 
     // Discover agents on every node in the platform.
     int32_t kfdIdx = 0;
+    printf("vhsa: Driver has %u nodes\n", sys_props.NumNodes);
     for (HSAuint32 node_id = 0; node_id < sys_props.NumNodes; node_id++) {
       HsaNodeProperties node_props = {0};
       if (driver->GetNodeProperties(node_props, node_id) != HSA_STATUS_SUCCESS) {
